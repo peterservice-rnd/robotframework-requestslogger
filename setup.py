@@ -18,7 +18,7 @@ with open(path.join(here, 'requirements.txt')) as f:
 
 setup(
     name='robotframework-requestslogger',
-    version='1.0.0',
+    version='1.0.1',
     description='Robot Framework Requests Logging Library',
     long_description=long_description,
     url='https://github.com/peterservice-rnd/robotframework-requestslogger',
@@ -38,5 +38,13 @@ setup(
     keywords='testing testautomation robotframework logging autotest requests http',
     package_dir={'': 'src'},
     py_modules=['RequestsLogger'],
-    install_requires=requirements,
+    install_requires=[
+        "robotframework",
+        "six"
+    ],
+    extras_require={
+        ':python_version<"3.2"': [
+            'functools32>=3.2.3-2'
+        ],
+    }
 )
