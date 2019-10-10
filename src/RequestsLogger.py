@@ -1,25 +1,22 @@
 # -*- coding: utf-8 -*-
 import json
 import re
+from functools import lru_cache
 from html import escape
+from typing import Any, AnyStr, Callable, List, Tuple
 from xml.dom import minidom
 
-import decorator
+from decorator import decorator
+from requests import Response
 from robot.api import logger
 from robot.utils import unic
-from six import binary_type, text_type
-
-try:
-    from functools import lru_cache
-except ImportError:
-    from functools32 import lru_cache
 
 """
 Library for logging HTTP requests and responses, based on [ http://docs.python-requests.org/en/latest| requests ] library.
 """
 
 
-def write_log(response):
+def write_log(response: Response) -> None:
     """
     Logging of http-request and response
 
@@ -36,19 +33,20 @@ def write_log(response):
     |              | RequestsLogger.Write log          | ${response}           |                           |             |
     """
     msg, converted_string = get_formatted_response(response)
-    response_data = u''
+    response_data = ''
     # log formatted response body
     if converted_string:
         response_data = escape(converted_string, quote=False)
 
-    data = u'<details><summary>{0}</summary><p>{1}\n{2}</p></details>'.format(escape(msg[0], quote=False),
-                                                                              escape(u'\n'.join(msg), quote=False),
-                                                                              response_data)
+    data = '<details><summary>{0}</summary><p>{1}\n{2}</p></details>'.format(escape(msg[0], quote=False),
+                                                                             escape('\n'.join(msg), quote=False),
+                                                                             response_data)
+
     logger.info(data, html=True)
 
 
 @lru_cache(maxsize=2)
-def get_formatted_response(response):
+def get_formatted_response(response: Response) -> Tuple[List[str], str]:
     """Format response for http-request.
 
     *Args:*\n
@@ -57,32 +55,26 @@ def get_formatted_response(response):
     *Returns:*\n
       Formatted response for http-request.
     """
-    msg = list()
+    msg: List[str] = list()
     # request info
-    msg.append(
-        u'> {0} {1}'.format(response.request.method, response.request.url))
-    for req_key, req_value in response.request.headers.items():
-        msg.append(u'> {header_name}: {header_value}'.format(header_name=req_key,
-                                                             header_value=req_value))
-    msg.append(u'>')
+    msg.append(f'> {response.request.method} {response.request.url}')
+    for header_name, header_value in response.request.headers.items():
+        msg.append(f'> {header_name}: {header_value}')
+    msg.append('>')
     if response.request.body:
-        req_body = response.request.body
-        if isinstance(req_body, binary_type):
-            req_body = unic(req_body)
-        msg.append(req_body)
-    msg.append(u'* Elapsed time: {0}'.format(response.elapsed))
-    msg.append(u'>')
+        msg.append(unic(response.request.body))
+    msg.append(f'* Elapsed time: {response.elapsed}')
+    msg.append('>')
     # response info
-    msg.append(u'< {0} {1}'.format(response.status_code, response.reason))
-    for res_key, res_value in response.headers.items():
-        msg.append(u'< {header_name}: {header_value}'.format(header_name=res_key,
-                                                             header_value=res_value))
+    msg.append(f'< {response.status_code} {response.reason}')
+    for header_name, header_value in response.headers.items():
+        msg.append(f'< {header_name}: {header_value}')
     # response body
-    msg.append(u'<')
-    converted_string = u''
-    if response.content:
+    msg.append('<')
+    converted_string = ''
+    response_content_type = response.headers.get('content-type') if response.content else None
+    if response_content_type:
         # get response Content-Type header
-        response_content_type = response.headers.get('content-type')
         if 'application/json' in response_content_type:
             response_content = get_decoded_response_body(response.content, response_content_type)
             try:
@@ -92,9 +84,8 @@ def get_formatted_response(response):
                                               separators=(',', ': '))
             except ValueError:
                 msg.append(response_content)
-                logger.error(u"Incorrect response content type (not application/JSON): {method} {url}".format(
-                    method=response.request.method,
-                    url=response.request.url))
+                logger.error(f"Incorrect response content type (not application/JSON): "
+                             f"{response.request.method} {response.request.url}")
 
         elif 'application/xml' in response_content_type:
             xml = minidom.parseString(response.content)
@@ -106,7 +97,7 @@ def get_formatted_response(response):
     return msg, converted_string
 
 
-def get_decoded_response_body(response_content, response_content_type, encoding='utf-8'):
+def get_decoded_response_body(response_content: AnyStr, response_content_type: str, encoding: str = 'utf-8') -> str:
     """ Decode body response.
 
     *Args:*\n
@@ -119,20 +110,23 @@ def get_decoded_response_body(response_content, response_content_type, encoding=
     """
     match = re.findall(re.compile('charset=(.*)'), response_content_type)
     # try to decode response body according to encoding provided in response Content-Type header.
-    if isinstance(response_content, text_type):
+    if isinstance(response_content, str):
         return response_content
     elif len(match) == 0:
         try:
             return response_content.decode(encoding)
-        except UnicodeError:
+        except UnicodeDecodeError:
             return unic(response_content)
     else:
         response_charset = match[0]
         return response_content.decode(response_charset)
 
 
-def _log_decorator(func, *args, **kwargs):
-    """ Write to log.
+@decorator
+def log_decorator(func: Callable[..., Response], *args: Any, **kwargs: Any) -> Response:
+    """
+    Decorator for http-requests. Logging request and response.
+    Decorated function must return response object [ http://docs.python-requests.org/en/latest/api/#requests | Response ]
 
     *Args:*\n
       _func_: function.\n
@@ -141,22 +135,6 @@ def _log_decorator(func, *args, **kwargs):
 
     *Returns:*\n
     Response of function call.
-    """
-    response = func(*args, **kwargs)
-    write_log(response)
-    return response
-
-
-def log_decorator(func):
-    """
-    Decorator for http-requests. Logging request and response.
-    Decorated function must return response object [ http://docs.python-requests.org/en/latest/api/#requests | Response ]
-
-    *Args:*\n
-      _func_: function.\n
-
-    *Returns:*\n
-    Decorated function.\n
 
     *Example:*
 
@@ -169,5 +147,6 @@ def log_decorator(func):
     Formatted output of request and response in test log
     """
 
-    func.cache = {}
-    return decorator.decorator(_log_decorator, func)
+    response = func(*args, **kwargs)
+    write_log(response)
+    return response
